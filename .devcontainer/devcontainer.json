@@ -1,0 +1,50 @@
+// [What] GitHub API / git / Copilot への通信をホワイトリスト制御する Dev Container 設定
+// [Who]  VS Code の Dev Containers 拡張が読み込む
+// [When] `Dev Containers: Reopen in Container` またはコンテナ再起動時に適用される
+// [Where] .devcontainer/devcontainer.json (VS Code が標準で探す場所)
+// [Why]  iptables OUTPUT DROP 環境で GitHub エンドポイントの動的 IP 変化に追従するため
+// [How]  onCreateCommand でツール導入 → postStartCommand でファイアウォールを構成する
+{
+  // [What] 開発環境の識別名 (VS Code の Remote Explorer に表示される)
+  // [Why]  複数の Dev Container を使い分けるときに区別できるようにする
+  "name": "GitHub Firewall Dev Container",
+
+  // [What] ベースとなる Docker イメージ
+  // [Who]  Microsoft 公式の devcontainers イメージ (Ubuntu ベース)
+  // [When] コンテナ初回ビルド時に Docker Hub / MCR から pull される
+  // [Why]  sudo, bash, apt-get などの基本コマンドが揃った安定ベースを使う
+  // [How]  必要なら `mcr.microsoft.com/devcontainers/base:debian` などに変更可能
+  "image": "mcr.microsoft.com/devcontainers/base:ubuntu",
+
+  // [What] docker run に渡す追加フラグ
+  // [Who]  Docker デーモンが解釈する
+  // [When] コンテナ起動毎に適用される
+  // [Where] ホスト OS の Docker ソケット経由でコンテナに渡る
+  // [Why]  NET_ADMIN がないと iptables / ipset / ip コマンドが Permission Denied になる
+  //        NET_BIND_SERVICE がないと dnsmasq が port 53 (特権ポート) をバインドできない
+  // [How]  2 つのケーパビリティを配列で列挙する
+  "runArgs": [
+    "--cap-add=NET_ADMIN",
+    "--cap-add=NET_BIND_SERVICE"
+  ],
+
+  // [What] コンテナ「作成時」に 1 度だけ実行するコマンド群
+  // [Who]  root (sudo) 権限でコンテナ内 sh が実行する
+  // [When] イメージの初回ビルドもしくは `Rebuild Container` 後の初回起動時のみ
+  // [Where] コンテナ内の /bin/sh で実行される
+  // [Why]  ファイアウォールスクリプトが依存するツールを事前インストールするため
+  //        (ipset: 動的 IP セット管理 / iptables: パケットフィルタ /
+  //         jq: JSON パース / dnsutils+curl: DNS・HTTP 疎通確認 /
+  //         dnsmasq: DNS フォワーダ + ipset 自動追加)
+  // [How]  apt-get で一括インストール後、スクリプトに実行権限を付与する
+  "onCreateCommand": "sudo apt-get update -qq && sudo apt-get install -y --no-install-recommends ipset iptables jq dnsutils curl dnsmasq && sudo chmod +x .devcontainer/scripts/*.sh",
+
+  // [What] コンテナ「起動のたびに」実行するコマンド
+  // [Who]  root (sudo) 権限でコンテナ内 bash が実行する
+  // [When] コンテナの再起動・再接続のたびに毎回実行される
+  // [Where] ワークスペースルートをカレントディレクトリとして実行される
+  // [Why]  コンテナが再起動するとカーネルの iptables / ipset ルールはリセットされるため
+  //        毎回 setup-firewall.sh でルールを再構成する必要がある
+  // [How]  sudo bash で明示的に bash を呼び出し、スクリプトに実行権限がなくても動作させる
+  "postStartCommand": "sudo bash .devcontainer/scripts/setup-firewall.sh"
+}
